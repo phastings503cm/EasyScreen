@@ -1,0 +1,129 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    name: Build DMG (Apple Silicon)
+    # GitHub's macOS 15 runners are Apple Silicon (arm64).
+    runs-on: macos-15
+    env:
+      # Optional: set these repository secrets to ship a Developer ID–signed,
+      # notarized build. Without them the app is ad-hoc signed.
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          swift --version
+
+      - name: Determine version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "Building EasyScreen $VERSION ($GITHUB_RUN_NUMBER)"
+
+      - name: Run tests
+        run: swift test
+
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "SIGN_IDENTITY=${MACOS_SIGN_IDENTITY:-Developer ID Application}" >> "$GITHUB_ENV"
+
+      - name: Build EasyScreen.app (arm64)
+        run: ./scripts/build-app.sh
+
+      - name: Package DMG
+        run: ./scripts/make-dmg.sh
+
+      - name: Notarize
+        if: env.SIGN_IDENTITY != '' && env.APPLE_ID != ''
+        run: |
+          DMG="build/EasyScreen-${VERSION}-arm64.dmg"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$DMG"
+          shasum -a 256 "$DMG" | sed "s#build/##" > "$DMG.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyScreen-${{ env.VERSION }}-arm64
+          path: |
+            build/EasyScreen-*.dmg
+            build/EasyScreen-*.dmg.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG="build/EasyScreen-${VERSION}-arm64.dmg"
+          if [[ -n "${SIGN_IDENTITY:-}" && -n "${APPLE_ID:-}" ]]; then
+            GATEKEEPER="This build is signed and notarized — just open it."
+          else
+            GATEKEEPER="This build is not notarized by Apple. After copying it to Applications, open it once with **right-click → Open**, or go to **System Settings → Privacy & Security** and click **Open Anyway**. You can also run \`xattr -dr com.apple.quarantine /Applications/EasyScreen.app\`."
+          fi
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## Install
+
+          1. Download **EasyScreen-${VERSION}-arm64.dmg** below (Apple Silicon Macs, macOS 14 Sonoma or later).
+          2. Open it and drag **EasyScreen** into **Applications**.
+          3. Launch EasyScreen from Applications. It lives in the menu bar and starts at login.
+          4. Allow **Screen Recording** when asked (System Settings → Privacy & Security → Screen & System Audio Recording), then relaunch.
+
+          ${GATEKEEPER}
+
+          Press **⇧⌘1** to capture a region.
+
+          SHA-256: \`$(cut -d' ' -f1 "$DMG.sha256")\`
+          EOF
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+              --title "EasyScreen $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              --generate-notes
+          fi
