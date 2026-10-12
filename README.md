@@ -94,6 +94,12 @@ VERSION=1.0.0 ./scripts/make-dmg.sh    # → build/EasyScreen-1.0.0-arm64.dmg
 open build/EasyScreen.app
 ```
 
+To exercise the real ScreenCaptureKit capture and global-hotkey registration (needs Screen Recording permission for your terminal; pixels are only measured in memory):
+
+```bash
+EASYSCREEN_LIVE_TESTS=1 swift test --filter LiveSystemTests
+```
+
 To render the overlay, editor and settings UI to PNGs for a visual check:
 
 ```bash
