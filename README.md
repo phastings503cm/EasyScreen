@@ -45,19 +45,29 @@
 1. Download `EasyScreen-<version>-arm64.dmg` from [Releases](https://github.com/phastings503cm/EasyScreen/releases/latest).
 2. Open the DMG and drag **EasyScreen** into **Applications**.
 3. Open EasyScreen from Applications.
-   - Release builds are not notarized by Apple (unless the maintainer adds signing secrets — see below), so the first launch is blocked.
+   - Release builds are not notarized by Apple, so the first launch is blocked.
      Go to **System Settings → Privacy & Security** and click **Open Anyway**, or run:
      ```bash
      xattr -dr com.apple.quarantine /Applications/EasyScreen.app
      ```
-4. When prompted, allow **Screen Recording** (System Settings → Privacy & Security → Screen & System Audio Recording), then relaunch EasyScreen (Settings has a **Relaunch** button).
+4. When macOS asks, allow **Screen Recording** (System Settings → Privacy & Security → Screen & System Audio Recording),
+   then choose **Quit & Reopen** (or use **Relaunch** in EasyScreen's Settings).
 
 **Requirements:** an Apple Silicon Mac (M1 or newer) running macOS 14 Sonoma or later.
 
-> **Note:** recent macOS versions occasionally re-confirm that screen-capture apps may keep recording; choose **Allow** if asked.
->
-> **Updating:** macOS ties the Screen Recording permission to the app's code signature. Ad-hoc–signed builds get a new signature
-> every release, so after updating you may need to toggle EasyScreen off and on again under Screen & System Audio Recording.
+Releases from 1.0.1 on are all signed with the same certificate, so macOS keeps the Screen Recording permission when you update.
+Recent macOS versions occasionally re-confirm that screen-capture apps may keep recording; choose **Allow** if asked.
+
+### "It's switched on but EasyScreen still asks for permission"
+
+macOS stores Screen Recording permission against an app's code signature. An entry left by a differently-signed copy
+(EasyScreen 1.0.0, or a build from source) shows as switched on but doesn't apply to the app you're running.
+Fix it once:
+
+- In EasyScreen's **Settings → Screen Recording**, click **Reset Permission**. EasyScreen removes its old entry and relaunches,
+  and macOS asks again — allow it, then **Quit & Reopen**.
+- Or remove EasyScreen from the list with the **–** button in System Settings, or run
+  `tccutil reset ScreenCapture io.github.phastings503cm.EasyScreen`, then reopen EasyScreen.
 
 ## Using it
 
@@ -86,6 +96,9 @@
 ## Build from source
 
 Requires Xcode 16 or newer (Swift 5.10+).
+
+Unsigned local builds are named **EasyScreen Dev** and use the bundle ID `io.github.phastings503cm.EasyScreen.dev`,
+so they get their own permission entry and never disturb the release app's.
 
 ```bash
 swift test                          # unit tests
@@ -118,14 +131,24 @@ git tag v1.2.0
 git push origin v1.2.0
 ```
 
-### Optional: Developer ID signing & notarization
+### Signing
 
-Add these repository secrets and CI will sign with your Developer ID and notarize the DMG, so users can open it without the Gatekeeper workaround:
+Tagged releases must be signed (the workflow fails otherwise), because a stable signature is what lets macOS remember
+Screen Recording permission across updates. This repository signs with a long-lived **self-signed** certificate:
 
 | Secret | Value |
 | --- | --- |
-| `MACOS_CERTIFICATE_P12` | Base64 of your *Developer ID Application* certificate exported as .p12 |
+| `MACOS_CERTIFICATE_P12` | Base64 of the signing certificate + private key exported as .p12 |
 | `MACOS_CERTIFICATE_PASSWORD` | Password for that .p12 |
+
+Keep the same certificate for every release — replacing it makes users grant permission again once.
+To create your own (for a fork), make a code-signing certificate and export it with
+`openssl pkcs12 -export -legacy …` so macOS's `security` tool can import it.
+
+To also get past Gatekeeper without the "Open Anyway" step, use a **Developer ID Application** certificate instead and add:
+
+| Secret | Value |
+| --- | --- |
 | `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
 | `APPLE_ID` | Apple ID email used for notarization |
 | `APPLE_TEAM_ID` | Your 10-character team ID |

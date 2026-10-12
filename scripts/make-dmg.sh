@@ -64,7 +64,7 @@ MOUNT_DIR=""
 rm -f "$DMG"
 retry hdiutil convert -quiet "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG"
 
-if [[ "$SIGN_IDENTITY" != "-" ]]; then
+if [[ "$SIGN_IDENTITY" == *"Developer ID"* ]]; then
   echo "==> Signing DMG"
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 fi

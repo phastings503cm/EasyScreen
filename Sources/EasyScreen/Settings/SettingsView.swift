@@ -138,15 +138,25 @@ struct SettingsView: View {
                     Label("Allowed", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 } else {
+                    Label("Not allowed", systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(.red)
+                }
+            }
+            if !system.hasScreenRecording {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Turn on EasyScreen under Privacy & Security → Screen & System Audio Recording, "
+                         + "then relaunch. Already on? That entry is from a different build — click "
+                         + "Reset Permission and allow EasyScreen again when macOS asks.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack {
-                        Label("Not allowed", systemImage: "xmark.octagon.fill")
-                            .foregroundStyle(.red)
-                        Button("Grant…") {
-                            Permissions.requestScreenRecording()
-                            Permissions.openScreenRecordingSettings()
-                        }
+                        Button("Open System Settings") { Permissions.openScreenRecordingSettings() }
+                        Button("Reset Permission") { Permissions.resetScreenRecordingAndRelaunch() }
+                            .help("Removes EasyScreen's old Screen Recording entry and relaunches")
+                        Spacer()
                         Button("Relaunch") { Permissions.relaunch() }
-                            .help("macOS applies the permission after EasyScreen restarts")
+                            .help("macOS applies a newly granted permission after EasyScreen restarts")
                     }
                 }
             }

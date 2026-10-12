@@ -58,6 +58,9 @@ enum ScreenCapturer {
     static func snapshotAllDisplays() async throws -> [DisplaySnapshot] {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { throw CaptureError.noDisplays }
+        // Check first: ScreenCaptureKit raises its own system prompt when
+        // refused, which would stack with EasyScreen's guidance.
+        guard Permissions.hasScreenRecording else { throw CaptureError.permissionDenied }
 
         let content: SCShareableContent
         do {

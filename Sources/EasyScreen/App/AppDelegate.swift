@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             runFirstLaunchSetup()
         }
         configureLoginItemOnce()
+        Permissions.requestAfterResetIfNeeded()
     }
 
     /// Opening the app again (Finder, Spotlight, Launchpad) shows Settings,

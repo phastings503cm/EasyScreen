@@ -20,8 +20,11 @@ jobs:
     # GitHub's macOS 15 runners are Apple Silicon (arm64).
     runs-on: macos-15
     env:
-      # Optional: set these repository secrets to ship a Developer ID–signed,
-      # notarized build. Without them the app is ad-hoc signed.
+      BUNDLE_ID: io.github.phastings503cm.EasyScreen
+      # Signing certificate (.p12, base64). A self-signed certificate keeps the
+      # app's identity stable so macOS remembers Screen Recording permission
+      # across updates; a Developer ID certificate (plus the APPLE_* secrets)
+      # additionally gets the DMG notarized.
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
@@ -63,11 +66,28 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/cert.p12"
-          echo "SIGN_IDENTITY=${MACOS_SIGN_IDENTITY:-Developer ID Application}" >> "$GITHUB_ENV"
+          # Use the named identity if given (Developer ID), otherwise the
+          # SHA-1 of the imported certificate (works for self-signed ones).
+          if [[ -n "${MACOS_SIGN_IDENTITY:-}" ]]; then
+            IDENTITY="$MACOS_SIGN_IDENTITY"
+          else
+            IDENTITY="$(security find-identity -p codesigning "$KEYCHAIN" | awk '/^ *[0-9]+\)/ { print $2; exit }')"
+          fi
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error::No code signing identity found in MACOS_CERTIFICATE_P12"
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Require signing for releases
+        if: github.ref_type == 'tag' && env.SIGN_IDENTITY == ''
+        run: |
+          echo "::error::Tagged releases must be signed so macOS keeps Screen Recording permission across updates. Add the MACOS_CERTIFICATE_P12 and MACOS_CERTIFICATE_PASSWORD secrets (see README)."
+          exit 1
 
       - name: Build EasyScreen.app (arm64)
         run: ./scripts/build-app.sh
@@ -76,7 +96,7 @@ jobs:
         run: ./scripts/make-dmg.sh
 
       - name: Notarize
-        if: env.SIGN_IDENTITY != '' && env.APPLE_ID != ''
+        if: env.SIGN_IDENTITY != '' && env.APPLE_ID != '' && env.MACOS_SIGN_IDENTITY != ''
         run: |
           DMG="build/EasyScreen-${VERSION}-arm64.dmg"
           xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \

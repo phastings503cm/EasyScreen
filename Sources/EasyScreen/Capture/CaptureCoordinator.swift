@@ -112,11 +112,11 @@ final class CaptureCoordinator {
 
     private func handle(_ error: Error) {
         if let captureError = error as? CaptureError, case .permissionDenied = captureError {
-            Permissions.presentScreenRecordingAlert()
+            Permissions.handleMissingScreenRecording()
             return
         }
         if !Permissions.hasScreenRecording {
-            Permissions.presentScreenRecordingAlert()
+            Permissions.handleMissingScreenRecording()
             return
         }
         NSApp.activate(ignoringOtherApps: true)
